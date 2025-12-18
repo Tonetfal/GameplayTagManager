@@ -1,4 +1,4 @@
-﻿// Author: Antonio Sidenko (Tonetfal), June 2025
+// Author: Antonio Sidenko (Tonetfal), June 2025
 
 using UnrealBuildTool;
 
@@ -20,8 +20,11 @@ public class GameplayTagManager : ModuleRules
 		);
 
 		PrivateDependencyModuleNames.AddRange(
-			new string[] {
-				"dbgLog"
+			new string[]
+			{
+				"dbgLog",
+				"GameplayDebugger",
+				"NetCore",
 			}
 		);
 	}

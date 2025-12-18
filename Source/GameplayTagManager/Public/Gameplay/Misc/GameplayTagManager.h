@@ -1,4 +1,4 @@
-﻿// Author: Antonio Sidenko (Tonetfal), June 2025
+// Author: Antonio Sidenko (Tonetfal), June 2025
 
 #pragma once
 
@@ -21,6 +21,12 @@ public:
 		FGameplayTagContainer, AddedTags,
 		FGameplayTagContainer, RemovedTags);
 
+	DECLARE_MULTICAST_DELEGATE_ThreeParams(
+		FOnTagsChangedSimpleSignature,
+		UGameplayTagManager* Manager,
+		FGameplayTagContainer AddedTags,
+		FGameplayTagContainer RemovedTags);
+
 	DECLARE_DYNAMIC_DELEGATE_ThreeParams(
 		FOnTagChangedSignature,
 		UGameplayTagManager*, Manager,
@@ -31,18 +37,39 @@ public:
 	UGameplayTagManager(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
 	UFUNCTION(BlueprintPure, Category="Gameplay Tags")
-	bool HasTag(FGameplayTag Tag) const;
+	static UGameplayTagManager* Get(const AActor* Actor);
+
+	//~UActorComponent Interface
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+	//~End of UActorComponent Interface
 
 	UFUNCTION(BlueprintPure, Category="Gameplay Tags")
-	bool HasTags(FGameplayTagContainer Tags) const;
+	bool HasTag(FGameplayTag Tag, bool bExact = true) const;
 
 	UFUNCTION(BlueprintPure, Category="Gameplay Tags")
+	bool HasTags(FGameplayTagContainer Tags, bool bExact = true) const;
+
+	UFUNCTION(BlueprintPure, Category="Gameplay Tags")
+	bool HasAllTags(FGameplayTagContainer Tags, bool bExact = true) const;
+
+	UFUNCTION(BlueprintPure, Category="Gameplay Tags", meta=(BlueprintThreadSafe))
 	FGameplayTagContainer GetTags() const;
 
-	UFUNCTION(BlueprintCallable, Category="Gameplay Tags")
-	void BindGameplayTagListener(UPARAM(DisplayName="Event") FOnTagChangedSignature Delegate, FGameplayTag Tag);
+	UFUNCTION(BlueprintPure, Category="Gameplay Tags", meta=(BlueprintThreadSafe))
+	FGameplayTagContainer GetRegularTags() const;
 
-	UFUNCTION(BlueprintCallable, Category="Gameplay Tags")
+	UFUNCTION(BlueprintPure, Category="Gameplay Tags", meta=(BlueprintThreadSafe))
+	FGameplayTagContainer GetLooseTags() const;
+
+	UFUNCTION(BlueprintPure, Category="Gameplay Tags", meta=(BlueprintThreadSafe))
+	FGameplayTagContainer GetAuthoritativeTags() const;
+
+	UFUNCTION(BlueprintCallable, Category="Gameplay Tags",
+		meta=(AdvancedDisplay="bFireDelegate", Keywords="add assign event"))
+	void BindGameplayTagListener(UPARAM(DisplayName="Event") FOnTagChangedSignature Delegate, FGameplayTag Tag,
+		bool bFireDelegate = false);
+
+	UFUNCTION(BlueprintCallable, Category="Gameplay Tags", meta=(Keywords="remove unassign event"))
 	void UnbindGameplayTagListener(UPARAM(DisplayName="Event") FOnTagChangedSignature Delegate, FGameplayTag Tag);
 
 #pragma region Replicated
@@ -57,6 +84,12 @@ public:
 
 	UFUNCTION(BlueprintAuthorityOnly, BlueprintCallable, Category="Gameplay Tags")
 	void RemoveTags(FGameplayTagContainer Tags);
+
+	UFUNCTION(BlueprintAuthorityOnly, BlueprintCallable, Category="Gameplay Tags")
+	void ChangeTag(FGameplayTag Tag, bool bAdd);
+
+	UFUNCTION(BlueprintAuthorityOnly, BlueprintCallable, Category="Gameplay Tags")
+	void ChangeTags(FGameplayTagContainer Tags, bool bAdd);
 #pragma endregion
 
 #pragma region Loose
@@ -71,6 +104,12 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="Gameplay Tags")
 	void RemoveLooseTags(FGameplayTagContainer Tags);
+
+	UFUNCTION(BlueprintCallable, Category="Gameplay Tags")
+	void ChangeLooseTag(FGameplayTag Tag, bool bAdd);
+
+	UFUNCTION(BlueprintCallable, Category="Gameplay Tags")
+	void ChangeLooseTags(FGameplayTagContainer Tags, bool bAdd);
 #pragma endregion
 
 #pragma region Authoritative
@@ -85,6 +124,12 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="Gameplay Tags")
 	void RemoveAuthoritativeTags(FGameplayTagContainer Tags);
+
+	UFUNCTION(BlueprintCallable, Category="Gameplay Tags")
+	void ChangeAuthoritativeTag(FGameplayTag Tag, bool bAdd);
+
+	UFUNCTION(BlueprintCallable, Category="Gameplay Tags")
+	void ChangeAuthoritativeTags(FGameplayTagContainer Tags, bool bAdd);
 #pragma endregion
 
 private:
@@ -99,6 +144,7 @@ private:
 public:
 	UPROPERTY(BlueprintAssignable, DisplayName="On Tags Changed", Category="Gameplay Tags")
 	FOnTagsChangedSignature OnTagsChangedDelegate;
+	FOnTagsChangedSimpleSignature OnTagsChangeSimpleDelegate;
 
 private:
 	/** Replicated to everyone. Changed server-side only. */
