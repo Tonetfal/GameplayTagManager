@@ -337,16 +337,15 @@ void UGameplayTagManager::NotifyTagsChanged()
 	{
 		if (auto* FoundListeners = SingleListeners.Find(It))
 		{
-			TSet<FOnTagChangedSignature> InvalidListenersToRemove;
-			for (FOnTagChangedSignature& Listener : *FoundListeners)
+			TSet<FOnTagChangedSignature> ListenersCopy = *FoundListeners;
+			for (FOnTagChangedSignature& Listener : ListenersCopy)
 			{
-				if (!Listener.ExecuteIfBound(this, It, Tags.HasTagExact(It)))
+				if (Listener.IsBound())
 				{
-					InvalidListenersToRemove.Add(Listener);
+					FoundListeners->Remove(Listener);
+					Listener.Execute(this, It, Tags.HasTagExact(It));
 				}
 			}
-
-			*FoundListeners = FoundListeners->Difference(InvalidListenersToRemove);
 		}
 	}
 }
