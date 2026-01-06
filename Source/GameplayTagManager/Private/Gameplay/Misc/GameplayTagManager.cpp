@@ -86,6 +86,8 @@ FGameplayTagContainer UGameplayTagManager::GetAuthoritativeTags() const
 
 void UGameplayTagManager::BindGameplayTagListener(FOnTagChangedSignature Delegate, FGameplayTag Tag, bool bFireDelegate)
 {
+	InvalidSingleListeners.Remove(Delegate);
+
 	auto& Signatures = SingleListeners.FindOrAdd(Tag);
 	Signatures.Add(Delegate);
 
@@ -97,6 +99,8 @@ void UGameplayTagManager::BindGameplayTagListener(FOnTagChangedSignature Delegat
 
 void UGameplayTagManager::UnbindGameplayTagListener(FOnTagChangedSignature Delegate, FGameplayTag Tag)
 {
+	InvalidSingleListeners.Remove(Delegate);
+
 	auto* Signatures = SingleListeners.Find(Tag);
 	if (Signatures)
 	{
@@ -342,10 +346,20 @@ void UGameplayTagManager::NotifyTagsChanged()
 			{
 				if (Listener.IsBound())
 				{
-					FoundListeners->Remove(Listener);
 					Listener.Execute(this, It, Tags.HasTagExact(It));
 				}
+				else
+				{
+					InvalidSingleListeners.Emplace(Listener);
+				}
 			}
+
+			for (FOnTagChangedSignature Listener : InvalidSingleListeners)
+			{
+				FoundListeners->Remove(Listener);
+			}
+
+			InvalidSingleListeners.Reset();
 		}
 	}
 }

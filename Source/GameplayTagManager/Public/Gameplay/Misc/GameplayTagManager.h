@@ -159,5 +159,6 @@ private:
 	FGameplayTagContainer AuthoritativeStateTags;
 
 	TMap<FGameplayTag, TSet<FOnTagChangedSignature>> SingleListeners;
+	TSet<FOnTagChangedSignature> InvalidSingleListeners;
 	FGameplayTagContainer LastKnownTags;
 };
