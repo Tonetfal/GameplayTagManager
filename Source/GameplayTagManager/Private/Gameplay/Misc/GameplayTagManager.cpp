@@ -118,7 +118,7 @@ void UGameplayTagManager::AddTags(FGameplayTagContainer Tags)
 	check(GetOwner()->HasAuthority());
 
 	Tags.RemoveTags(StateTags);
-	if (!StateTags.HasAll(Tags))
+	if (!StateTags.HasAllExact(Tags))
 	{
 		LOGVS(.Category(LogGameplayTagManager), "Add tags [{0}]", Tags);
 		UE_VLOG(this, LogGameplayTagManager, Log, TEXT("%s> Add tags [%s]"), *GetOwner()->GetName(), *Tags.ToString());
@@ -183,7 +183,7 @@ void UGameplayTagManager::AddLooseTag(FGameplayTag Tag)
 void UGameplayTagManager::AddLooseTags(FGameplayTagContainer Tags)
 {
 	Tags.RemoveTags(LooseStateTags);
-	if (!LooseStateTags.HasAll(Tags))
+	if (!LooseStateTags.HasAllExact(Tags))
 	{
 		LOGVS(.Category(LogGameplayTagManager), "Add loose tags [{0}]", Tags);
 		UE_VLOG(this, LogGameplayTagManager, Log, TEXT("%s> Add loose tags [%s]"), *GetOwner()->GetName(),
@@ -247,7 +247,7 @@ void UGameplayTagManager::AddAuthoritativeTags(FGameplayTagContainer Tags)
 	ensure(GetOwner()->GetLocalRole() != ROLE_SimulatedProxy);
 
 	Tags.RemoveTags(AuthoritativeStateTags);
-	if (!AuthoritativeStateTags.HasAll(Tags))
+	if (!AuthoritativeStateTags.HasAllExact(Tags))
 	{
 		LOGVS(.Category(LogGameplayTagManager), "Add authoritative tags [{0}]", Tags);
 		UE_VLOG(this, LogGameplayTagManager, Log, TEXT("%s> Add authoritative tags [%s]"), *GetOwner()->GetName(),
