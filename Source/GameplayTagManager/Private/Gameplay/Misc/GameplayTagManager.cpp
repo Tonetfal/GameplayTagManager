@@ -86,8 +86,6 @@ FGameplayTagContainer UGameplayTagManager::GetAuthoritativeTags() const
 
 void UGameplayTagManager::BindGameplayTagListener(FOnTagChangedSignature Delegate, FGameplayTag Tag, bool bFireDelegate)
 {
-	InvalidSingleListeners.Remove(Delegate);
-
 	auto& Signatures = SingleListeners.FindOrAdd(Tag);
 	Signatures.Add(Delegate);
 
@@ -99,12 +97,27 @@ void UGameplayTagManager::BindGameplayTagListener(FOnTagChangedSignature Delegat
 
 void UGameplayTagManager::UnbindGameplayTagListener(FOnTagChangedSignature Delegate, FGameplayTag Tag)
 {
-	InvalidSingleListeners.Remove(Delegate);
-
 	auto* Signatures = SingleListeners.Find(Tag);
 	if (Signatures)
 	{
 		Signatures->Remove(Delegate);
+	}
+}
+
+FDelegateHandle UGameplayTagManager::BindGameplayTagListener(FOnTagChangedSimpleSignature Delegate, FGameplayTag Tag)
+{
+	auto& Signatures = SingleSimpleListeners.FindOrAdd(Tag);
+	return Signatures.Add(Delegate);
+}
+
+void UGameplayTagManager::UnbindGameplayTagListener(FDelegateHandle Handle)
+{
+	for (auto& [Tag, MulticastDelegate] : SingleSimpleListeners)
+	{
+		if (MulticastDelegate.Remove(Handle))
+		{
+			return;
+		}
 	}
 }
 
@@ -339,27 +352,20 @@ void UGameplayTagManager::NotifyTagsChanged()
 
 	for (FGameplayTag It : ModifiedTags.GetGameplayTagArray())
 	{
-		if (auto* FoundListeners = SingleListeners.Find(It))
+		for (auto& [Tag, Listeners] : SingleListeners)
 		{
-			TSet<FOnTagChangedSignature> ListenersCopy = *FoundListeners;
-			for (FOnTagChangedSignature& Listener : ListenersCopy)
+			if (It.MatchesTag(Tag))
 			{
-				if (Listener.IsBound())
-				{
-					Listener.Execute(this, It, Tags.HasTagExact(It));
-				}
-				else
-				{
-					InvalidSingleListeners.Emplace(Listener);
-				}
+				Listeners.Broadcast(this, It, Tags.HasTagExact(It));
 			}
+		}
 
-			for (FOnTagChangedSignature Listener : InvalidSingleListeners)
+		for (auto& [Tag, Listeners] : SingleSimpleListeners)
+		{
+			if (It.MatchesTag(Tag))
 			{
-				FoundListeners->Remove(Listener);
+				Listeners.Broadcast(this, It, Tags.HasTagExact(It));
 			}
-
-			InvalidSingleListeners.Reset();
 		}
 	}
 }

@@ -33,6 +33,24 @@ public:
 		FGameplayTag, Tag,
 		bool, bIsPresent);
 
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(
+		FOnTagChangedMulticastSignature,
+		UGameplayTagManager*, Manager,
+		FGameplayTag, Tag,
+		bool, bIsPresent);
+
+	DECLARE_DELEGATE_ThreeParams(
+		FOnTagChangedSimpleSignature,
+		UGameplayTagManager* Manager,
+		FGameplayTag Tag,
+		bool bIsPresent);
+
+	DECLARE_MULTICAST_DELEGATE_ThreeParams(
+		FOnTagChangedMulticastSimpleSignature,
+		UGameplayTagManager* Manager,
+		FGameplayTag Tag,
+		bool bIsPresent);
+
 public:
 	UGameplayTagManager(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
@@ -71,6 +89,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="Gameplay Tags", meta=(Keywords="remove unassign event"))
 	void UnbindGameplayTagListener(UPARAM(DisplayName="Event") FOnTagChangedSignature Delegate, FGameplayTag Tag);
+
+	FDelegateHandle BindGameplayTagListener(FOnTagChangedSimpleSignature Delegate, FGameplayTag Tag);
+	void UnbindGameplayTagListener(FDelegateHandle Handle);
 
 #pragma region Replicated
 	UFUNCTION(BlueprintAuthorityOnly, BlueprintCallable, Category="Gameplay Tags")
@@ -158,7 +179,7 @@ private:
 	UPROPERTY(ReplicatedUsing="OnRep_StateTags")
 	FGameplayTagContainer AuthoritativeStateTags;
 
-	TMap<FGameplayTag, TSet<FOnTagChangedSignature>> SingleListeners;
-	TSet<FOnTagChangedSignature> InvalidSingleListeners;
+	TMap<FGameplayTag, FOnTagChangedMulticastSignature> SingleListeners;
+	TMap<FGameplayTag, FOnTagChangedMulticastSimpleSignature> SingleSimpleListeners;
 	FGameplayTagContainer LastKnownTags;
 };

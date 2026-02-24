@@ -21,6 +21,9 @@ namespace GameplayTagManager
 	struct FSerializedTagData
 	{
 	public:
+		void Serialize(FArchive& Ar);
+
+	public:
 		FGameplayTag Tag;
 		ETagAction Action = ETagAction::Invalid;
 		float ActionTimestamp = 0.f;
@@ -29,11 +32,24 @@ namespace GameplayTagManager
 	struct FSerializedTagManagerData
 	{
 	public:
-		TWeakObjectPtr<const UGameplayTagManager> TagManager = nullptr;
-		float FirstSerializationTimestamp = 0.f;
+		void Serialize(FArchive& Ar);
 
+	public:
+		TWeakObjectPtr<const UGameplayTagManager> TagManager = nullptr;
+
+		float FirstSerializationTimestamp = 0.f;
+		FString TagManagerOwnerName;
 		TArray<FSerializedTagData> SerializedTags;
 		FGameplayTagContainer LastTags;
+	};
+
+	struct FRepData
+	{
+	public:
+		void Serialize(FArchive& Ar);
+
+	public:
+		TArray<FSerializedTagManagerData> DebugData;
 	};
 
 	class FGameplayDebuggerCategory_GameplayTags
@@ -48,6 +64,7 @@ namespace GameplayTagManager
 		//~FGameplayDebuggerCategory Interface
 		virtual void CollectData(APlayerController* OwnerPC, AActor* DebugActor) override;
 		virtual void DrawData(APlayerController* OwnerPC, FGameplayDebuggerCanvasContext& CanvasContext) override;
+		virtual void OnDataPackReplicated(int32 DataPackId) override;
 		//~End of FGameplayDebuggerCategory Interface
 
 	private:
@@ -55,7 +72,7 @@ namespace GameplayTagManager
 
 	private:
 		TWeakObjectPtr<AActor> LastDebugActor = nullptr;
-		TArray<FSerializedTagManagerData> DebugData;
+		FRepData DataPack;
 	};
 }
 #endif
