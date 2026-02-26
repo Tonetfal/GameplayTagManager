@@ -15,6 +15,8 @@ namespace GameplayTagManager
 	{
 		Invalid,
 		Pushed,
+		Increased,
+		Decreased,
 		Popped,
 	};
 
@@ -27,20 +29,33 @@ namespace GameplayTagManager
 		FGameplayTag Tag;
 		ETagAction Action = ETagAction::Invalid;
 		float ActionTimestamp = 0.f;
+		FString AdditionalData;
 	};
 
 	struct FSerializedTagManagerData
 	{
 	public:
+		struct FGameplayTagCountPair
+		{
+		public:
+			void Serialize(FArchive& Ar);
+
+		public:
+			FGameplayTag Tag;
+			int32 Count = 0;
+		};
+
+	public:
 		void Serialize(FArchive& Ar);
 
 	public:
 		TWeakObjectPtr<const UGameplayTagManager> TagManager = nullptr;
-
+		TMap<FGameplayTag, int32> LastTags;
 		float FirstSerializationTimestamp = 0.f;
+
 		FString TagManagerOwnerName;
 		TArray<FSerializedTagData> SerializedTags;
-		FGameplayTagContainer LastTags;
+		TArray<FGameplayTagCountPair> ReplicatedLastTags;
 	};
 
 	struct FRepData
@@ -72,6 +87,7 @@ namespace GameplayTagManager
 
 	private:
 		TWeakObjectPtr<AActor> LastDebugActor = nullptr;
+
 		FRepData DataPack;
 	};
 }

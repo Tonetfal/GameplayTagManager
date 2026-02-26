@@ -3,14 +3,30 @@
 #include "Gameplay/Misc/GameplayTagManager.h"
 
 #include "GameplayTagManagerModule.h"
-#include "Net/UnrealNetwork.h"
 #include "Net/Core/PushModel/PushModel.h"
+#include "Net/UnrealNetwork.h"
+#include "Profiling/GTM_Profiling.h"
+
+namespace
+{
+	FGameplayTagContainer RemoveTags(const FGameplayTagContainer& Target, const FGameplayTagContainer& Filter)
+	{
+		FGameplayTagContainer ResultContainer = Target;
+		ResultContainer.RemoveTags(Filter);
+		return ResultContainer;
+	}
+}
 
 UGameplayTagManager::UGameplayTagManager(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
+	, ReplicatedStateTagsContainer(this, "Replicated")
+	, LooseStateTagsContainer(this, "Loose")
+	, AuthoritativeStateTagsContainer(this, "Authoritative")
 {
 	PrimaryComponentTick.bCanEverTick = false;
 	PrimaryComponentTick.bStartWithTickEnabled = false;
+
+	bWantsInitializeComponent = true;
 
 	SetIsReplicatedByDefault(true);
 }
@@ -33,10 +49,35 @@ void UGameplayTagManager::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& 
 	FDoRepLifetimeParams Params;
 	Params.bIsPushBased = true;
 
-	DOREPLIFETIME_WITH_PARAMS_FAST(ThisClass, StateTags, Params);
+	DOREPLIFETIME_WITH_PARAMS_FAST(ThisClass, ReplicatedStateTagsContainer, Params);
 
 	Params.Condition = COND_SkipOwner;
-	DOREPLIFETIME_WITH_PARAMS_FAST(ThisClass, AuthoritativeStateTags, Params);
+	DOREPLIFETIME_WITH_PARAMS_FAST(ThisClass, AuthoritativeStateTagsContainer, Params);
+}
+
+void UGameplayTagManager::InitializeComponent()
+{
+	Super::InitializeComponent();
+
+	ReplicatedStateTagsContainer.OnInternalsChangedDelegate.BindUObject(this, &ThisClass::NotifyTagsChanged);
+	LooseStateTagsContainer.OnInternalsChangedDelegate.BindUObject(this, &ThisClass::NotifyTagsChanged);
+	AuthoritativeStateTagsContainer.OnInternalsChangedDelegate.BindUObject(this, &ThisClass::NotifyTagsChanged);
+}
+
+FGameplayTagContainer UGameplayTagManager::GetTags() const
+{
+	return CachedTags;
+}
+
+const TMap<FGameplayTag, int32>& UGameplayTagManager::GetTagsToCount() const
+{
+	return CachedTagsCount;
+}
+
+int32 UGameplayTagManager::GetTagCount(FGameplayTag Tag) const
+{
+	const int32* FoundCount = CachedTagsCount.Find(Tag);
+	return FoundCount ? *FoundCount : 0;
 }
 
 bool UGameplayTagManager::HasTag(FGameplayTag Tag, bool bExact) const
@@ -58,36 +99,14 @@ bool UGameplayTagManager::HasAllTags(FGameplayTagContainer Tags, bool bExact) co
 	return bReturnValue;
 }
 
-FGameplayTagContainer UGameplayTagManager::GetTags() const
-{
-	FGameplayTagContainer ReturnValue;
-
-	ReturnValue.AppendTags(StateTags);
-	ReturnValue.AppendTags(LooseStateTags);
-	ReturnValue.AppendTags(AuthoritativeStateTags);
-
-	return ReturnValue;
-}
-
-FGameplayTagContainer UGameplayTagManager::GetRegularTags() const
-{
-	return StateTags;
-}
-
-FGameplayTagContainer UGameplayTagManager::GetLooseTags() const
-{
-	return LooseStateTags;
-}
-
-FGameplayTagContainer UGameplayTagManager::GetAuthoritativeTags() const
-{
-	return AuthoritativeStateTags;
-}
-
 void UGameplayTagManager::BindGameplayTagListener(FOnTagChangedSignature Delegate, FGameplayTag Tag, bool bFireDelegate)
 {
-	auto& Signatures = SingleListeners.FindOrAdd(Tag);
-	Signatures.Add(Delegate);
+	auto& MulticastDelegate = SingleListeners.FindOrAdd(Tag);
+	if (ensureAlwaysMsgf(!MulticastDelegate.Contains(Delegate),
+		TEXT("Binding same delegate to a dynamic delegate is incorrect. Fix your higher level code")))
+	{
+		MulticastDelegate.Add(Delegate);
+	}
 
 	if (bFireDelegate)
 	{
@@ -121,47 +140,84 @@ void UGameplayTagManager::UnbindGameplayTagListener(FDelegateHandle Handle)
 	}
 }
 
+FGameplayTagContainer UGameplayTagManager::GetReplicatedTags() const
+{
+	return ReplicatedStateTagsContainer.GetTags();
+}
+
+int32 UGameplayTagManager::GetReplicatedTagCount(FGameplayTag Tag) const
+{
+	return ReplicatedStateTagsContainer.GetStackCount(Tag);
+}
+
 void UGameplayTagManager::AddTag(FGameplayTag Tag)
 {
-	AddTags(FGameplayTagContainer(Tag));
+	if (!ensureMsgf(GetOwner()->HasAuthority(), TEXT("Replicated tags must be changed server-side only")))
+	{
+		return;
+	}
+
+	ReplicatedStateTagsContainer.AddStack(Tag, 1);
+	MARK_PROPERTY_DIRTY_FROM_NAME(ThisClass, ReplicatedStateTagsContainer, this);
 }
 
 void UGameplayTagManager::AddTags(FGameplayTagContainer Tags)
 {
-	check(GetOwner()->HasAuthority());
-
-	Tags.RemoveTags(StateTags);
-	if (!StateTags.HasAllExact(Tags))
+	const TArray<FGameplayTag>& TagsArray = Tags.GetGameplayTagArray();
+	for (const FGameplayTag& Tag : TagsArray)
 	{
-		LOGVS(.Category(LogGameplayTagManager), "Add tags [{0}]", Tags);
-		UE_VLOG(this, LogGameplayTagManager, Log, TEXT("%s> Add tags [%s]"), *GetOwner()->GetName(), *Tags.ToString());
-
-		StateTags.AppendTags(Tags);
-		MARK_PROPERTY_DIRTY_FROM_NAME(ThisClass, StateTags, this);
-		NotifyTagsChanged();
+		AddTag(Tag);
 	}
 }
 
 void UGameplayTagManager::RemoveTag(FGameplayTag Tag)
 {
-	RemoveTags(FGameplayTagContainer(Tag));
+	if (!ensureMsgf(GetOwner()->HasAuthority(), TEXT("Replicated tags must be changed server-side only")))
+	{
+		return;
+	}
+
+	ReplicatedStateTagsContainer.RemoveStack(Tag, 1);
+	MARK_PROPERTY_DIRTY_FROM_NAME(ThisClass, ReplicatedStateTagsContainer, this);
 }
 
 void UGameplayTagManager::RemoveTags(FGameplayTagContainer Tags)
 {
-	check(GetOwner()->HasAuthority());
-
-	const FGameplayTagContainer MatchingTags = StateTags.FilterExact(Tags);
-	if (StateTags.HasAny(MatchingTags))
+	const TArray<FGameplayTag>& TagsArray = Tags.GetGameplayTagArray();
+	for (const FGameplayTag& Tag : TagsArray)
 	{
-		LOGVS(.Category(LogGameplayTagManager), "Remove tags [{0}]", MatchingTags);
-		UE_VLOG(this, LogGameplayTagManager, Log, TEXT("%s> Remove tags [%s]"), *GetOwner()->GetName(),
-			*MatchingTags.ToString());
-
-		StateTags.RemoveTags(MatchingTags);
-		MARK_PROPERTY_DIRTY_FROM_NAME(ThisClass, StateTags, this);
-		NotifyTagsChanged();
+		RemoveTag(Tag);
 	}
+}
+
+void UGameplayTagManager::OverrideTag(FGameplayTag Tag, int32 NewCount)
+{
+	OverrideTags(FGameplayTagContainer(Tag), NewCount);
+}
+
+void UGameplayTagManager::OverrideTags(FGameplayTagContainer Tags, int32 NewCount)
+{
+	if (!ensureMsgf(GetOwner()->HasAuthority(), TEXT("Replicated tags must be changed server-side only")))
+	{
+		return;
+	}
+
+	const TArray<FGameplayTag>& TagsArray = Tags.GetGameplayTagArray();
+	for (const FGameplayTag& Tag : TagsArray)
+	{
+		ReplicatedStateTagsContainer.OverrideStack(Tag, NewCount);
+		MARK_PROPERTY_DIRTY_FROM_NAME(ThisClass, ReplicatedStateTagsContainer, this);
+	}
+}
+
+void UGameplayTagManager::ClearTag(FGameplayTag Tag)
+{
+	OverrideTag(Tag, 0);
+}
+
+void UGameplayTagManager::ClearTags(FGameplayTagContainer Tags)
+{
+	OverrideTags(Tags, 0);
 }
 
 void UGameplayTagManager::ChangeTag(FGameplayTag Tag, bool bAdd)
@@ -188,42 +244,66 @@ void UGameplayTagManager::ChangeTags(FGameplayTagContainer Tags, bool bAdd)
 	}
 }
 
+FGameplayTagContainer UGameplayTagManager::GetLooseTags() const
+{
+	return LooseStateTagsContainer.GetTags();
+}
+
+int32 UGameplayTagManager::GetLooseTagCount(FGameplayTag Tag) const
+{
+	return LooseStateTagsContainer.GetStackCount(Tag);
+}
+
 void UGameplayTagManager::AddLooseTag(FGameplayTag Tag)
 {
-	AddLooseTags(FGameplayTagContainer(Tag));
+	LooseStateTagsContainer.AddStack(Tag, 1);
 }
 
 void UGameplayTagManager::AddLooseTags(FGameplayTagContainer Tags)
 {
-	Tags.RemoveTags(LooseStateTags);
-	if (!LooseStateTags.HasAllExact(Tags))
+	const TArray<FGameplayTag>& TagsArray = Tags.GetGameplayTagArray();
+	for (const FGameplayTag& Tag : TagsArray)
 	{
-		LOGVS(.Category(LogGameplayTagManager), "Add loose tags [{0}]", Tags);
-		UE_VLOG(this, LogGameplayTagManager, Log, TEXT("%s> Add loose tags [%s]"), *GetOwner()->GetName(),
-			*Tags.ToString());
-
-		LooseStateTags.AppendTags(Tags);
-		NotifyTagsChanged();
+		AddLooseTag(Tag);
 	}
 }
 
 void UGameplayTagManager::RemoveLooseTag(FGameplayTag Tag)
 {
-	RemoveLooseTags(FGameplayTagContainer(Tag));
+	LooseStateTagsContainer.RemoveStack(Tag, 1);
 }
 
 void UGameplayTagManager::RemoveLooseTags(FGameplayTagContainer Tags)
 {
-	const FGameplayTagContainer MatchingTags = LooseStateTags.FilterExact(Tags);
-	if (LooseStateTags.HasAny(MatchingTags))
+	const TArray<FGameplayTag>& TagsArray = Tags.GetGameplayTagArray();
+	for (const FGameplayTag& Tag : TagsArray)
 	{
-		LOGVS(.Category(LogGameplayTagManager), "Remove loose tags [{0}]", MatchingTags);
-		UE_VLOG(this, LogGameplayTagManager, Log, TEXT("%s> Remove loose tags [%s]"), *GetOwner()->GetName(),
-			*MatchingTags.ToString());
-
-		LooseStateTags.RemoveTags(MatchingTags);
-		NotifyTagsChanged();
+		RemoveLooseTag(Tag);
 	}
+}
+
+void UGameplayTagManager::OverrideLooseTag(FGameplayTag Tag, int32 NewCount)
+{
+	LooseStateTagsContainer.OverrideStack(Tag, NewCount);
+}
+
+void UGameplayTagManager::OverrideLooseTags(FGameplayTagContainer Tags, int32 NewCount)
+{
+	const TArray<FGameplayTag>& TagsArray = Tags.GetGameplayTagArray();
+	for (const FGameplayTag& Tag : TagsArray)
+	{
+		OverrideLooseTag(Tag, NewCount);
+	}
+}
+
+void UGameplayTagManager::ClearLooseTag(FGameplayTag Tag)
+{
+	OverrideLooseTag(Tag, 0);
+}
+
+void UGameplayTagManager::ClearLooseTags(FGameplayTagContainer Tags)
+{
+	OverrideLooseTags(Tags, 0);
 }
 
 void UGameplayTagManager::ChangeLooseTag(FGameplayTag Tag, bool bAdd)
@@ -250,48 +330,81 @@ void UGameplayTagManager::ChangeLooseTags(FGameplayTagContainer Tags, bool bAdd)
 	}
 }
 
+FGameplayTagContainer UGameplayTagManager::GetAuthoritativeTags() const
+{
+	return AuthoritativeStateTagsContainer.GetTags();
+}
+
+int32 UGameplayTagManager::GetAuthoritativeTagCount(FGameplayTag Tag) const
+{
+	return AuthoritativeStateTagsContainer.GetStackCount(Tag);
+}
+
 void UGameplayTagManager::AddAuthoritativeTag(FGameplayTag Tag)
 {
-	AddAuthoritativeTags(FGameplayTagContainer(Tag));
+	const bool bIsNotSimProxy = GetOwner()->GetLocalRole() != ROLE_SimulatedProxy;
+	if (!ensureMsgf(bIsNotSimProxy, TEXT("Authoritative tags can be changed only by server or autonomous proxy")))
+	{
+		return;
+	}
+
+	AuthoritativeStateTagsContainer.AddStack(Tag, 1);
+	MARK_PROPERTY_DIRTY_FROM_NAME(ThisClass, AuthoritativeStateTagsContainer, this);
 }
 
 void UGameplayTagManager::AddAuthoritativeTags(FGameplayTagContainer Tags)
 {
-	ensure(GetOwner()->GetLocalRole() != ROLE_SimulatedProxy);
-
-	Tags.RemoveTags(AuthoritativeStateTags);
-	if (!AuthoritativeStateTags.HasAllExact(Tags))
+	const TArray<FGameplayTag>& TagsArray = Tags.GetGameplayTagArray();
+	for (const FGameplayTag& Tag : TagsArray)
 	{
-		LOGVS(.Category(LogGameplayTagManager), "Add authoritative tags [{0}]", Tags);
-		UE_VLOG(this, LogGameplayTagManager, Log, TEXT("%s> Add authoritative tags [%s]"), *GetOwner()->GetName(),
-			*Tags.ToString());
-
-		AuthoritativeStateTags.AppendTags(Tags);
-		MARK_PROPERTY_DIRTY_FROM_NAME(ThisClass, AuthoritativeStateTags, this);
-		NotifyTagsChanged();
+		AddAuthoritativeTag(Tag);
 	}
 }
 
 void UGameplayTagManager::RemoveAuthoritativeTag(FGameplayTag Tag)
 {
-	RemoveAuthoritativeTags(FGameplayTagContainer(Tag));
+	const bool bIsNotSimProxy = GetOwner()->GetLocalRole() != ROLE_SimulatedProxy;
+	if (!ensureMsgf(bIsNotSimProxy, TEXT("Authoritative tags can be changed only by server or autonomous proxy")))
+	{
+		return;
+	}
+
+	AuthoritativeStateTagsContainer.RemoveStack(Tag, 1);
+	MARK_PROPERTY_DIRTY_FROM_NAME(ThisClass, AuthoritativeStateTagsContainer, this);
 }
 
 void UGameplayTagManager::RemoveAuthoritativeTags(FGameplayTagContainer Tags)
 {
-	ensure(GetOwner()->GetLocalRole() != ROLE_SimulatedProxy);
-
-	const FGameplayTagContainer MatchingTags = AuthoritativeStateTags.FilterExact(Tags);
-	if (AuthoritativeStateTags.HasAny(MatchingTags))
+	const TArray<FGameplayTag>& TagsArray = Tags.GetGameplayTagArray();
+	for (const FGameplayTag& Tag : TagsArray)
 	{
-		LOGVS(.Category(LogGameplayTagManager), "Remove authoritative tags [{0}]", MatchingTags);
-		UE_VLOG(this, LogGameplayTagManager, Log, TEXT("%s> Remove authoritative tags [%s]"), *GetOwner()->GetName(),
-			*MatchingTags.ToString());
-
-		AuthoritativeStateTags.RemoveTags(MatchingTags);
-		MARK_PROPERTY_DIRTY_FROM_NAME(ThisClass, AuthoritativeStateTags, this);
-		NotifyTagsChanged();
+		RemoveAuthoritativeTag(Tag);
 	}
+}
+
+void UGameplayTagManager::OverrideAuthoritativeTag(FGameplayTag Tag, int32 NewCount)
+{
+	AuthoritativeStateTagsContainer.OverrideStack(Tag, NewCount);
+	MARK_PROPERTY_DIRTY_FROM_NAME(ThisClass, AuthoritativeStateTagsContainer, this);
+}
+
+void UGameplayTagManager::OverrideAuthoritativeTags(FGameplayTagContainer Tags, int32 NewCount)
+{
+	const TArray<FGameplayTag>& TagsArray = Tags.GetGameplayTagArray();
+	for (const FGameplayTag& Tag : TagsArray)
+	{
+		OverrideAuthoritativeTag(Tag, NewCount);
+	}
+}
+
+void UGameplayTagManager::ClearAuthoritativeTag(FGameplayTag Tag)
+{
+	OverrideLooseTag(Tag, 0);
+}
+
+void UGameplayTagManager::ClearAuthoritativeTags(FGameplayTagContainer Tags)
+{
+	OverrideLooseTags(Tags, 0);
 }
 
 void UGameplayTagManager::ChangeAuthoritativeTag(FGameplayTag Tag, bool bAdd)
@@ -318,25 +431,12 @@ void UGameplayTagManager::ChangeAuthoritativeTags(FGameplayTagContainer Tags, bo
 	}
 }
 
-void UGameplayTagManager::OnRep_StateTags()
-{
-	NotifyTagsChanged();
-}
-
-void UGameplayTagManager::OnRep_AuthoritativeStateTags()
-{
-	NotifyTagsChanged();
-}
-
-static FGameplayTagContainer RemoveTags(const FGameplayTagContainer& Target, const FGameplayTagContainer& Filter)
-{
-	FGameplayTagContainer ResultContainer = Target;
-	ResultContainer.RemoveTags(Filter);
-	return ResultContainer;
-}
-
 void UGameplayTagManager::NotifyTagsChanged()
 {
+	SCOPE_CYCLE_COUNTER(STAT_GTM_BroadcastingTags);
+
+	CacheTags();
+
 	const FGameplayTagContainer Tags = GetTags();
 	const FGameplayTagContainer AddedTags = ::RemoveTags(Tags, LastKnownTags);
 	const FGameplayTagContainer RemovedTags = ::RemoveTags(LastKnownTags, Tags);
@@ -350,9 +450,11 @@ void UGameplayTagManager::NotifyTagsChanged()
 	ModifiedTags.AppendTags(AddedTags);
 	ModifiedTags.AppendTags(RemovedTags);
 
-	for (FGameplayTag It : ModifiedTags.GetGameplayTagArray())
+	const TArray<FGameplayTag>& ModifiedTagsArray = ModifiedTags.GetGameplayTagArray();
+	for (const FGameplayTag& It : ModifiedTagsArray)
 	{
-		for (auto& [Tag, Listeners] : SingleListeners)
+		const auto SingleListenersCopy = SingleListeners;
+		for (auto& [Tag, Listeners] : SingleListenersCopy)
 		{
 			if (It.MatchesTag(Tag))
 			{
@@ -360,7 +462,8 @@ void UGameplayTagManager::NotifyTagsChanged()
 			}
 		}
 
-		for (auto& [Tag, Listeners] : SingleSimpleListeners)
+		const auto SingleSimpleListenersCopy = SingleSimpleListeners;
+		for (auto& [Tag, Listeners] : SingleSimpleListenersCopy)
 		{
 			if (It.MatchesTag(Tag))
 			{
@@ -368,4 +471,18 @@ void UGameplayTagManager::NotifyTagsChanged()
 			}
 		}
 	}
+}
+
+void UGameplayTagManager::CacheTags()
+{
+	CachedTagsCount.Reset();
+	CachedTags.Reset();
+
+	CachedTagsCount.Append(ReplicatedStateTagsContainer.GetTagToCountMap());
+	CachedTagsCount.Append(LooseStateTagsContainer.GetTagToCountMap());
+	CachedTagsCount.Append(AuthoritativeStateTagsContainer.GetTagToCountMap());
+
+	CachedTags.AppendTags(ReplicatedStateTagsContainer.GetTags());
+	CachedTags.AppendTags(LooseStateTagsContainer.GetTags());
+	CachedTags.AppendTags(AuthoritativeStateTagsContainer.GetTags());
 }

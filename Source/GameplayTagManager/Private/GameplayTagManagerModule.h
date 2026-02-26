@@ -4,7 +4,8 @@
 
 #include "dbgLog.h"
 
-#define LOGVS(Args, Msg, ...) dbgLOGV(Args.WCO(this), Msg, __VA_ARGS__)
+#define LOGVS(Args, Msg, ...) LOGVSC(this, Msg, __VA_ARGS__)
+#define LOGVSC(CONTEXT, Args, Msg, ...) dbgLOGV(Args.WCO(CONTEXT), Msg, __VA_ARGS__)
 #define LOGV(Args, Msg, ...) dbgLOGV(Args, Msg, __VA_ARGS__)
 
 class FGameplayTagManagerModule

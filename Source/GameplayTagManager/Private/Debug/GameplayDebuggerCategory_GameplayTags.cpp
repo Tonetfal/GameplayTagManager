@@ -3,6 +3,8 @@
 #include "GameplayDebuggerCategory_GameplayTags.h"
 
 #if WITH_GAMEPLAY_DEBUGGER
+
+#include "GameFramework/GameStateBase.h"
 #include "GameFramework/PlayerState.h"
 #include "Gameplay/Misc/GameplayTagManager.h"
 
@@ -13,6 +15,13 @@ namespace GameplayTagManager
 		Ar << Tag;
 		Ar << Action;
 		Ar << ActionTimestamp;
+		Ar << AdditionalData;
+	}
+
+	void FSerializedTagManagerData::FGameplayTagCountPair::Serialize(FArchive& Ar)
+	{
+		Ar << Tag;
+		Ar << Count;
 	}
 
 	void FSerializedTagManagerData::Serialize(FArchive& Ar)
@@ -20,13 +29,60 @@ namespace GameplayTagManager
 		Ar << FirstSerializationTimestamp;
 		Ar << TagManagerOwnerName;
 
-		for (FSerializedTagData& Tag : SerializedTags)
+		if (Ar.IsSaving())
 		{
-			Tag.Serialize(Ar);
+			int32 Num = SerializedTags.Num();
+			Ar << Num;
+
+			for (FSerializedTagData& Data : SerializedTags)
+			{
+				Data.Serialize(Ar);
+			}
+		}
+		else
+		{
+			int32 Num;
+			Ar << Num;
+
+			SerializedTags.Reset(Num);
+			for (int32 i = 0; i < Num; ++i)
+			{
+				SerializedTags.AddDefaulted_GetRef().Serialize(Ar);
+			}
 		}
 
-		bool bSuccess = false;
-		LastTags.NetSerialize(Ar, nullptr, bSuccess);
+		if (Ar.IsSaving())
+		{
+			int32 Num = LastTags.Num();
+			Ar << Num;
+
+			for (auto& Pair : LastTags)
+			{
+				FGameplayTag Tag = Pair.Key;
+				int32 Value = Pair.Value;
+
+				Ar << Tag;
+				Ar << Value;
+			}
+		}
+		else
+		{
+			int32 Num;
+			Ar << Num;
+
+			LastTags.Reset();
+			LastTags.Reserve(Num);
+			for (int32 i = 0; i < Num; ++i)
+			{
+				FGameplayTag Tag;
+				int32 Value;
+
+				Ar << Tag;
+				Ar << Value;
+
+				LastTags.Emplace(Tag, Value);
+			}
+		}
 	}
 
 	void FRepData::Serialize(FArchive& Ar)
@@ -49,7 +105,7 @@ namespace GameplayTagManager
 	{
 		bShowOnlyWithDebugActor = false;
 
-		SetDataPackReplication<FRepData>(&DataPack);
+		SetDataPackReplication<FRepData>(&DataPack, EGameplayDebuggerDataPack::ResetOnActorChange);
 	}
 
 	TSharedRef<FGameplayDebuggerCategory> FGameplayDebuggerCategory_GameplayTags::MakeInstance()
@@ -64,28 +120,47 @@ namespace GameplayTagManager
 			return;
 		}
 
-		const FGameplayTagContainer NewTags = InOutSerializedData.TagManager->GetTags();
+		const TMap<FGameplayTag, int32>& NewTags = InOutSerializedData.TagManager->GetTagsToCount();
 
 		const float Time = InOutSerializedData.TagManager->GetWorld()->TimeSeconds;
 		if (InOutSerializedData.FirstSerializationTimestamp != Time)
 		{
-			const TArray<FGameplayTag>& NewTagsArray = NewTags.GetGameplayTagArray();
-			const TArray<FGameplayTag>& OldTagsArray = InOutSerializedData.LastTags.GetGameplayTagArray();
+			const TMap<FGameplayTag, int32>& NewTagsArray = NewTags;
+			const TMap<FGameplayTag, int32>& OldTagsArray = InOutSerializedData.LastTags;
 
-			for (const FGameplayTag& Tag : NewTagsArray)
+			for (const auto& [Tag, Count] : NewTagsArray)
 			{
 				if (!OldTagsArray.Contains(Tag))
 				{
-					FSerializedTagData Data(Tag, ETagAction::Pushed, Time);
+					FSerializedTagData Data(Tag, ETagAction::Pushed, Time, "0 -> " + FString::FromInt(Count));
 					InOutSerializedData.SerializedTags.EmplaceAt(0, Data);
 				}
 			}
 
-			for (const FGameplayTag& Tag : OldTagsArray)
+			for (const auto& [Tag, NewCount] : NewTagsArray)
+			{
+				const auto* OldCount = OldTagsArray.Find(Tag);
+				if (OldCount && NewCount != *OldCount)
+				{
+					const FString AdditionalData = FString::FromInt(*OldCount) + " -> " + FString::FromInt(NewCount);
+					if (NewCount > *OldCount)
+					{
+						FSerializedTagData Data(Tag, ETagAction::Increased, Time, AdditionalData);
+						InOutSerializedData.SerializedTags.EmplaceAt(0, Data);
+					}
+					else
+					{
+						FSerializedTagData Data(Tag, ETagAction::Decreased, Time, AdditionalData);
+						InOutSerializedData.SerializedTags.EmplaceAt(0, Data);
+					}
+				}
+			}
+
+			for (const auto& [Tag, Count] : OldTagsArray)
 			{
 				if (!NewTagsArray.Contains(Tag))
 				{
-					FSerializedTagData Data(Tag, ETagAction::Popped, Time);
+					FSerializedTagData Data(Tag, ETagAction::Popped, Time, FString::FromInt(Count) + " -> 0");
 					InOutSerializedData.SerializedTags.EmplaceAt(0, Data);
 				}
 			}
@@ -110,8 +185,10 @@ namespace GameplayTagManager
 	}
 
 	constexpr FColor White(255, 255, 255);
-	constexpr FColor Red(255, 0, 0);
 	constexpr FColor Green(0, 255, 0);
+	constexpr FColor DarkGreen(0, 192, 0);
+	constexpr FColor Orange(255, 128, 0);
+	constexpr FColor Red(255, 0, 0);
 
 	static FColor ActionToColor(ETagAction Action)
 	{
@@ -120,7 +197,11 @@ namespace GameplayTagManager
 			case ETagAction::Invalid:
 				return White;
 			case ETagAction::Pushed:
+				return DarkGreen;
+			case ETagAction::Increased:
 				return Green;
+			case ETagAction::Decreased:
+				return Orange;
 			case ETagAction::Popped:
 				return Red;
 			default:
@@ -173,6 +254,10 @@ namespace GameplayTagManager
 		{
 			case ETagAction::Pushed:
 				return "Pushed";
+			case ETagAction::Increased:
+				return "Increased";
+			case ETagAction::Decreased:
+				return "Decreased";
 			case ETagAction::Popped:
 				return "Popped";
 			default:
@@ -200,9 +285,9 @@ namespace GameplayTagManager
 
 		CanvasContext.MoveToNewLine();
 		PRINT(FColor::White, TEXT("Tags:"));
-		for (const FGameplayTag& Tag : Data.LastTags.GetGameplayTagArray())
+		for (const auto& [Tag, Count] : Data.LastTags)
 		{
-			PRINT(FColor::White, TEXT("- %s"), *Tag.ToString());
+			PRINT(FColor::White, TEXT("- %s (%d)"), *Tag.ToString(), Count);
 		}
 
 		CanvasContext.MoveToNewLine();
@@ -212,8 +297,8 @@ namespace GameplayTagManager
 			const FString TagString = SerializedTag.Tag.ToString();
 			const FString ActionString = LexToString(SerializedTag.Action);
 
-			PRINT(ActionToColor(SerializedTag.Action), TEXT("- %s - %s (%.2fs)"),
-				*TagString, *ActionString, CurrentTime - SerializedTag.ActionTimestamp);
+			PRINT(ActionToColor(SerializedTag.Action), TEXT("- %s - %s (%.2fs) %s"),
+				*TagString, *ActionString, CurrentTime - SerializedTag.ActionTimestamp, *SerializedTag.AdditionalData);
 		}
 
 		return MaxCursorX;
@@ -223,9 +308,10 @@ namespace GameplayTagManager
 		FGameplayDebuggerCanvasContext& CanvasContext)
 	{
 		float MaxCursorX = 0.f;
-		for (const FSerializedTagManagerData& Data : DataPack.DebugData)
+		const float Time = OwnerPC->GetWorld()->GetGameState()->GetServerWorldTimeSeconds();
+		for (FSerializedTagManagerData& Data : DataPack.DebugData)
 		{
-			MaxCursorX = PrintGameplayTagManager(Data, CanvasContext, MaxCursorX, OwnerPC->GetWorld()->TimeSeconds);
+			MaxCursorX = PrintGameplayTagManager(Data, CanvasContext, MaxCursorX, Time);
 			CanvasContext.CursorY = CanvasContext.DefaultY + CanvasContext.GetLineHeight();
 			MaxCursorX += 100.f;
 		}
@@ -249,10 +335,12 @@ namespace GameplayTagManager
 			return *FoundData;
 		}
 
-		const float Time = TagManager->GetWorld()->TimeSeconds;
-		return DataPack.DebugData.Emplace_GetRef(
-			FSerializedTagManagerData(TagManager, Time,
-				TagManager->GetOwner()->GetName()));
+		FSerializedTagManagerData& Data = DataPack.DebugData.AddDefaulted_GetRef();
+		Data.TagManager = TagManager;
+		Data.FirstSerializationTimestamp = TagManager->GetWorld()->TimeSeconds;
+		Data.TagManagerOwnerName = TagManager->GetOwner()->GetName();
+
+		return Data;
 	}
 }
 #endif
