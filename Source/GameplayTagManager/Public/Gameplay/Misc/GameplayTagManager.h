@@ -3,11 +3,17 @@
 #pragma once
 
 #include "GameplayTagContainer.h"
-#include "GTM_GameplayTagStackContainer.h"
+#include "Gameplay/Misc/GTM_GameplayTagStackContainer.h"
+
+#if ENABLE_DRAW_DEBUG
+#include "Debug/GTM_ShowDebug.h"
+#endif
 
 #include "GameplayTagManager.generated.h"
 
 DECLARE_LOG_CATEGORY_CLASS(LogGameplayTagManager, All, All);
+
+struct FAutoCompleteCommand;
 
 /**
  * General purpose component that can be used to keep track of tags on a component.
@@ -233,6 +239,10 @@ private:
 	void NotifyTagsChanged();
 	void CacheTags();
 
+#if ENABLE_DRAW_DEBUG
+	void ShowDebugInfo(AHUD* HUD, UCanvas* Canvas, const FDebugDisplayInfo& DisplayInfo, float& YL, float& YPos);
+#endif
+
 public:
 	UPROPERTY(BlueprintAssignable, DisplayName="On Tags Changed", Category="Gameplay Tags")
 	FOnTagsChangedSignature OnTagsChangedDelegate;
@@ -260,4 +270,8 @@ private:
 	TMap<FGameplayTag, FOnTagChangedMulticastSignature> SingleListeners;
 	TMap<FGameplayTag, FOnTagChangedMulticastSimpleSignature> SingleSimpleListeners;
 	FGameplayTagContainer LastKnownTags;
+
+#if ENABLE_DRAW_DEBUG
+	GameplayTagManager::FGTM_ShowDebug ShowDebugObj;
+#endif
 };

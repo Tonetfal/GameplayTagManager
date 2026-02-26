@@ -5,22 +5,14 @@
 #include "GameplayTagContainer.h"
 
 #include "GameplayDebuggerCategory.h"
+#include "Debug/GTM_ShowDebug.h"
 
 class UGameplayTagManager;
 
 #if WITH_GAMEPLAY_DEBUGGER
 namespace GameplayTagManager
 {
-	enum class ETagAction : uint8
-	{
-		Invalid,
-		Pushed,
-		Increased,
-		Decreased,
-		Popped,
-	};
-
-	struct FSerializedTagData
+	struct FRepSerializedTagData
 	{
 	public:
 		void Serialize(FArchive& Ar);
@@ -32,7 +24,7 @@ namespace GameplayTagManager
 		FString AdditionalData;
 	};
 
-	struct FSerializedTagManagerData
+	struct FRepSerializedTagManagerData
 	{
 	public:
 		struct FGameplayTagCountPair
@@ -54,7 +46,7 @@ namespace GameplayTagManager
 		float FirstSerializationTimestamp = 0.f;
 
 		FString TagManagerOwnerName;
-		TArray<FSerializedTagData> SerializedTags;
+		TArray<FRepSerializedTagData> SerializedTags;
 		TArray<FGameplayTagCountPair> ReplicatedLastTags;
 	};
 
@@ -64,7 +56,7 @@ namespace GameplayTagManager
 		void Serialize(FArchive& Ar);
 
 	public:
-		TArray<FSerializedTagManagerData> DebugData;
+		TArray<FRepSerializedTagManagerData> DebugData;
 	};
 
 	class FGameplayDebuggerCategory_GameplayTags
@@ -83,7 +75,7 @@ namespace GameplayTagManager
 		//~End of FGameplayDebuggerCategory Interface
 
 	private:
-		FSerializedTagManagerData& GetDebugData(const UGameplayTagManager* TagManager);
+		FRepSerializedTagManagerData& GetDebugData(const UGameplayTagManager* TagManager);
 
 	private:
 		TWeakObjectPtr<AActor> LastDebugActor = nullptr;

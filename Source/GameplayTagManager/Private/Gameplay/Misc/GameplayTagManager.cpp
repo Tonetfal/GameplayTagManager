@@ -3,6 +3,7 @@
 #include "Gameplay/Misc/GameplayTagManager.h"
 
 #include "GameplayTagManagerModule.h"
+#include "GameFramework/HUD.h"
 #include "Net/Core/PushModel/PushModel.h"
 #include "Net/UnrealNetwork.h"
 #include "Profiling/GTM_Profiling.h"
@@ -62,6 +63,13 @@ void UGameplayTagManager::InitializeComponent()
 	ReplicatedStateTagsContainer.OnInternalsChangedDelegate.BindUObject(this, &ThisClass::NotifyTagsChanged);
 	LooseStateTagsContainer.OnInternalsChangedDelegate.BindUObject(this, &ThisClass::NotifyTagsChanged);
 	AuthoritativeStateTagsContainer.OnInternalsChangedDelegate.BindUObject(this, &ThisClass::NotifyTagsChanged);
+
+	if (!IsRunningDedicatedServer())
+	{
+#if ENABLE_DRAW_DEBUG
+		AHUD::OnShowDebugInfo.AddUObject(this, &ThisClass::ShowDebugInfo);
+#endif
+	}
 }
 
 FGameplayTagContainer UGameplayTagManager::GetTags() const
@@ -486,3 +494,21 @@ void UGameplayTagManager::CacheTags()
 	CachedTags.AppendTags(LooseStateTagsContainer.GetTags());
 	CachedTags.AppendTags(AuthoritativeStateTagsContainer.GetTags());
 }
+
+#if ENABLE_DRAW_DEBUG
+void UGameplayTagManager::ShowDebugInfo(AHUD* HUD, UCanvas* Canvas, const FDebugDisplayInfo& DisplayInfo, float& YL,
+	float& YPos)
+{
+	ENetRole Role = GetOwner()->GetRemoteRole();
+	if (Role == ROLE_SimulatedProxy)
+	{
+		return;
+	}
+
+	using namespace GameplayTagManager;
+	const FShowDebugContext Context(HUD, Canvas, DisplayInfo);
+	FShowDebugIntermediate IntermediateData(YL, YPos);
+
+	ShowDebugObj.ShowDebugInfo(Context, IntermediateData);
+}
+#endif

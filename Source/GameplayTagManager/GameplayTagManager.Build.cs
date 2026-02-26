@@ -22,6 +22,7 @@ public class GameplayTagManager : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
+                "EngineSettings",
 				"dbgLog",
 				"GameplayDebugger",
 				"NetCore",
