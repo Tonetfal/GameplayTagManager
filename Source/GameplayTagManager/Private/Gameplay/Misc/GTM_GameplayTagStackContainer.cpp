@@ -88,8 +88,9 @@ void FGTM_GameplayTagStackContainer::RemoveStack(FGameplayTag Tag, int32 StackCo
 		{
 			if (Stack.StackCount == StackCount)
 			{
-				RemoveStackImpl(Stack);
+				FGTM_GameplayTagStack StackCopy = Stack;
 				It.RemoveCurrent();
+				RemoveStackImpl(StackCopy);
 			}
 			else
 			{
@@ -133,8 +134,9 @@ void FGTM_GameplayTagStackContainer::OverrideStack(FGameplayTag Tag, int32 Stack
 			{
 				if (StackCount == 0)
 				{
-					RemoveStackImpl(Stack);
+					FGTM_GameplayTagStack StackCopy = Stack;
 					It.RemoveCurrent();
+					RemoveStackImpl(StackCopy);
 				}
 				else
 				{
