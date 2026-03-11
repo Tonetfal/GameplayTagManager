@@ -88,6 +88,14 @@ void FGTM_GameplayTagBlueprintPropertyMap::Initialize(UObject* InOwner, UGamepla
 
 		PropertyMappings.RemoveAtSwap(MappingIndex, EAllowShrinking::No);
 	}
+
+	// Broadcast all bindings to make sure that our state is correct in case some of the tags were already present
+	// before initializating the property map
+	for (const FGTM_GameplayTagBlueprintPropertyMapping& PropertyMapping : PropertyMappings)
+	{
+		Delegate.Execute(CachedGameplayTagManager.Get(), PropertyMapping.TagToMap,
+			CachedGameplayTagManager->HasTag(PropertyMapping.TagToMap, true));
+	}
 }
 
 void FGTM_GameplayTagBlueprintPropertyMap::ApplyCurrentTags()
